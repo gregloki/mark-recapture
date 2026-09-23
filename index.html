@@ -62,7 +62,7 @@ details.setup[open] > summary .sum{ display:none; }
 
 /* pond */
 .pondwrap{ position:relative; border-radius:22px; overflow:hidden; background:var(--bank); box-shadow:inset 0 0 0 1px var(--line); }
-canvas{ display:block; width:100%; aspect-ratio:520/420; touch-action:pan-y; }
+canvas{ display:block; width:100%; aspect-ratio:888/564; touch-action:pan-y; }
 canvas.drag{ touch-action:none; }
 .hud{ position:absolute; left:10px; top:10px; display:flex; gap:6px; flex-wrap:wrap; pointer-events:none; }
 .pill{ background:rgba(18,34,30,.78); color:#EEF4EA; font-size:.82rem; padding:3px 10px; border-radius:999px; }
@@ -221,19 +221,25 @@ footer{ margin-top:18px; font-size:.82rem; color:var(--ink-soft); }
 
 <script>
 /* ===== Simulation core (pure, no DOM) ===== */
-const W = 520, H = 420, CX = 246, CY = 210, RX = 228, RY = 192;
-const TRAP = 46, STEP = 0.05;           // trap side (units), sim step (hours)
-const BASE_SPEED = 16, ATTRACT = 58;    // units per hour, bait radius
-const WEAR_PER_HR = 0.006;
-const RELOCATE_PER_HR = 0.025;
-const EMIG_PER_HR = 0.008;              // open pond: chance per hour a snail heads out the canal
-const MOUTH = { x: CX + RX - 14, y: CY }; // where the canal meets the pond           // leashed snails occasionally shift home              // chance per hour a paint mark flakes off
+// Rectangular pond, about 3x the area of the first version. Behaviour lengths are scaled by K
+// so catch rates and mixing times stay comparable while snails and traps look relatively smaller.
+const K = 1.73;
+const W = 888, H = 564;                                  // world incl. banks (canal side is wider)
+const PX0 = 24, PY0 = 24, PX1 = 824, PY1 = 540;          // pond edges, 800 x 516
+const CX = (PX0 + PX1) / 2, CY = (PY0 + PY1) / 2, RX = (PX1 - PX0) / 2, RY = (PY1 - PY0) / 2;
+const TRAP = 46, STEP = 0.05;                            // trap side (units), sim step (hours)
+const BASE_SPEED = 16 * K, ATTRACT = 58 * K;             // units per hour, bait radius
+const WEAR_PER_HR = 0.006;                               // chance per hour a paint mark flakes off
+const RELOCATE_PER_HR = 0.025;                           // leashed snails occasionally shift home
+const EMIG_PER_HR = 0.008;                               // open pond: chance per hour a snail heads out the canal
+const MOUTH = { x: PX1 - 16, y: CY };                    // where the canal meets the pond
+const PATCH_R = 42 * K, PATCH_SD = 24 * K, PATCH_LEASH = 34 * K;
 
 function makeRng(seed) {
   let s = seed >>> 0 || 1;
   return () => { s ^= s << 13; s >>>= 0; s ^= s >> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; };
 }
-function inPond(x, y, m = 0) { const a = (x - CX) / (RX - m), b = (y - CY) / (RY - m); return a * a + b * b <= 1; }
+function inPond(x, y, m = 0) { return x >= PX0 + m && x <= PX1 - m && y >= PY0 + m && y <= PY1 - m; }
 function angDiff(a, b) { let d = a - b; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; return d; }
 
 function createSim(o) {
@@ -247,16 +253,16 @@ function createSim(o) {
   if (o.dist === 'clumped') {
     const k = 3 + (rnd() < 0.5 ? 1 : 0);
     for (let tries = 0; sim.patches.length < k && tries < 500; tries++) {
-      const p = ptIn(70);
-      if (sim.patches.every(q => Math.hypot(q.x - p.x, q.y - p.y) > 120)) sim.patches.push({ ...p, r: 42 });
+      const p = ptIn(70 * K);
+      if (sim.patches.every(q => Math.hypot(q.x - p.x, q.y - p.y) > 120 * K)) sim.patches.push({ ...p, r: PATCH_R });
     }
     for (let i = 0; i < o.N; i++) {
       const p = sim.patches[i % sim.patches.length];
-      let h; do { h = { x: p.x + gauss() * 24, y: p.y + gauss() * 24 }; } while (!inPond(h.x, h.y, 12));
-      homes.push({ ...h, leash: 34 });
+      let h; do { h = { x: p.x + gauss() * PATCH_SD, y: p.y + gauss() * PATCH_SD }; } while (!inPond(h.x, h.y, 12));
+      homes.push({ ...h, leash: PATCH_LEASH });
     }
   } else if (o.dist === 'uniform') {
-    const area = Math.PI * RX * RY, sp = Math.sqrt(area / o.N) * 0.93;
+    const area = 4 * RX * RY, sp = Math.sqrt(area / o.N) * 0.93;
     let pts = [];
     for (let y = CY - RY, row = 0; y <= CY + RY; y += sp * 0.866, row++)
       for (let x = CX - RX + (row % 2) * sp / 2; x <= CX + RX; x += sp)
@@ -281,13 +287,14 @@ function createSim(o) {
 
 function defaultTrapSpots(n) {
   const spots = { 1: [[0, 0]], 2: [[-0.45, 0], [0.45, 0]],
-    4: [[-0.45, -0.4], [0.45, -0.4], [-0.45, 0.4], [0.45, 0.4]],
-    8: [[-0.62, 0], [-0.3, -0.55], [0.3, -0.55], [0.62, 0], [0.3, 0.55], [-0.3, 0.55], [0, -0.12], [0, 0.22]] }[n];
+    4: [[-0.45, -0.45], [0.45, -0.45], [-0.45, 0.45], [0.45, 0.45]],
+    8: [[-0.66, -0.45], [-0.22, -0.45], [0.22, -0.45], [0.66, -0.45], [-0.66, 0.45], [-0.22, 0.45], [0.22, 0.45], [0.66, 0.45]] }[n];
   return spots.map(([a, b]) => ({ x: CX + a * RX, y: CY + b * RY }));
 }
 function clampTrap(t) {
   // keep whole trap inside the pond
-  for (let i = 0; i < 40 && !inPond(t.x, t.y, TRAP * 0.75); i++) { t.x += (CX - t.x) * 0.08; t.y += (CY - t.y) * 0.08; }
+  const m = TRAP / 2 + 4;
+  t.x = Math.max(PX0 + m, Math.min(PX1 - m, t.x)); t.y = Math.max(PY0 + m, Math.min(PY1 - m, t.y));
   return t;
 }
 function inTrap(s, t) { return Math.abs(s.x - t.x) < TRAP / 2 - 3 && Math.abs(s.y - t.y) < TRAP / 2 - 3; }
@@ -303,7 +310,7 @@ function stepSim(sim, dt) {
       s.h += angDiff(Math.atan2(MOUTH.y - s.y, MOUTH.x - s.x), s.h) * 0.35;
     } else if (s.home && rnd() < RELOCATE_PER_HR * dt) {
       // occasionally a snail moves to a new spot, keeping the overall pattern
-      if (sim.dist === 'clumped') { const p = sim.patches[(rnd() * sim.patches.length) | 0]; s.home = { x: p.x + gauss() * 24, y: p.y + gauss() * 24 }; if (!inPond(s.home.x, s.home.y, 12)) s.home = { x: p.x, y: p.y }; }
+      if (sim.dist === 'clumped') { const p = sim.patches[(rnd() * sim.patches.length) | 0]; s.home = { x: p.x + gauss() * PATCH_SD, y: p.y + gauss() * PATCH_SD }; if (!inPond(s.home.x, s.home.y, 12)) s.home = { x: p.x, y: p.y }; }
       else { const o = sim.snails[(rnd() * sim.snails.length) | 0]; if (o.home && o.trap < 0) { const t = o.home; o.home = s.home; s.home = t; } }
     }
     if (s.home && !s.leaving) {
@@ -321,7 +328,7 @@ function stepSim(sim, dt) {
       }
     }
     const nx = s.x + Math.cos(s.h) * s.v * dt, ny = s.y + Math.sin(s.h) * s.v * dt;
-    if (s.leaving && Math.hypot(nx - MOUTH.x, ny - MOUTH.y) < 12) { s.gone = true; continue; }
+    if (s.leaving && Math.hypot(nx - MOUTH.x, ny - MOUTH.y) < 12 * K) { s.gone = true; continue; }
     if (!inPond(nx, ny, 9)) { s.h += s.leaving ? (rnd() - 0.5) : Math.PI * (0.6 + rnd() * 0.8); if (!s.leaving) continue; }
     s.x = nx; s.y = ny;
     if (sim.openPop && !s.leaving && rnd() < EMIG_PER_HR * dt) s.leaving = true;
@@ -348,9 +355,9 @@ function stepSim(sim, dt) {
 function newcomer(sim) {
   const { rnd, gauss } = sim;
   let home = null, leash = 0;
-  if (sim.dist === 'clumped') { const p = sim.patches[(rnd() * sim.patches.length) | 0]; home = { x: p.x + gauss() * 24, y: p.y + gauss() * 24 }; if (!inPond(home.x, home.y, 12)) home = { x: p.x, y: p.y }; leash = 34; }
-  else if (sim.dist === 'uniform') { const o = sim.snails.find(q => q.home) ; if (o) { home = { x: o.home.x + gauss() * 10, y: o.home.y + gauss() * 10 }; if (!inPond(home.x, home.y, 12)) home = { ...o.home }; leash = o.leash; } }
-  return { x: MOUTH.x - 6, y: MOUTH.y + (rnd() - 0.5) * 16, h: Math.PI + gauss() * 0.5, v: BASE_SPEED * (0.7 + rnd() * 0.6),
+  if (sim.dist === 'clumped') { const p = sim.patches[(rnd() * sim.patches.length) | 0]; home = { x: p.x + gauss() * PATCH_SD, y: p.y + gauss() * PATCH_SD }; if (!inPond(home.x, home.y, 12)) home = { x: p.x, y: p.y }; leash = PATCH_LEASH; }
+  else if (sim.dist === 'uniform') { const o = sim.snails.find(q => q.home) ; if (o) { home = { x: o.home.x + gauss() * 10 * K, y: o.home.y + gauss() * 10 * K }; if (!inPond(home.x, home.y, 12)) home = { ...o.home }; leash = o.leash; } }
+  return { x: MOUTH.x - 6, y: MOUTH.y + (rnd() - 0.5) * 28, h: Math.PI + gauss() * 0.5, v: BASE_SPEED * (0.7 + rnd() * 0.6),
     home, leash, marked: false, caughtBefore: false, trap: -1, newcomer: true };
 }
 function advance(sim, hours, stopWhenClosed) {
@@ -373,7 +380,7 @@ function releaseAll(sim) {
     s.h = sim.rnd() * Math.PI * 2;
   }
 }
-if (typeof module !== 'undefined') module.exports = { MOUTH, createSim, defaultTrapSpots, clampTrap, advance, openTraps, tally, markTrapped, releaseAll, stepSim, W, H, TRAP };
+if (typeof module !== 'undefined') module.exports = { MOUTH, PX0, PX1, PY0, PY1, createSim, defaultTrapSpots, clampTrap, advance, openTraps, tally, markTrapped, releaseAll, stepSim, W, H, TRAP };
 /* ===== end core ===== */
 
 </script>
@@ -404,41 +411,64 @@ function newWorld() {
 }
 function makeDecor(sim) {
   const r = Math.random;
-  const reeds = []; for (let i = 0; i < 70; i++) { const a = r() * Math.PI * 2; reeds.push({ a, l: 8 + r() * 14, w: (r() - .5) * .5 }); }
-  const lilies = []; for (let i = 0; i < 6; i++) { const a = r() * Math.PI * 2, k = .78 + r() * .12; lilies.push({ x: CX + Math.cos(a) * RX * k, y: CY + Math.sin(a) * RY * k, r: 9 + r() * 7, rot: r() * 6.28 }); }
-  const beds = sim.patches.map(p => { const blobs = []; for (let i = 0; i < 9; i++) blobs.push({ dx: (r() - .5) * p.r * 1.3, dy: (r() - .5) * p.r * 1.3, rr: p.r * (.35 + r() * .3) });
-    const leaves = []; for (let i = 0; i < 16; i++) leaves.push({ dx: (r() - .5) * p.r * 1.6, dy: (r() - .5) * p.r * 1.6, a: r() * 6.28 }); return { ...p, blobs, leaves }; });
-  const ripples = []; for (let i = 0; i < 10; i++) { const p = { x: CX + (r() - .5) * RX * 1.4, y: CY + (r() - .5) * RY * 1.4 }; if (inPond(p.x, p.y, 30)) ripples.push({ ...p, w: 14 + r() * 20 }); }
+  // reeds along the rectangular bank, pointing outward
+  const reeds = [];
+  const sides = [['t', PX1 - PX0], ['b', PX1 - PX0], ['l', PY1 - PY0], ['r', PY1 - PY0]];
+  for (const [side, len] of sides) for (let i = 0; i < len / 16; i++) reeds.push({ side, t: r() * len, l: 8 + r() * 12, w: (r() - .5) * .6 });
+  const lilies = [];
+  for (let i = 0; i < 10; i++) { const edge = r() < .5; const x = edge ? PX0 + 20 + r() * (PX1 - PX0 - 40) : (r() < .5 ? PX0 + 20 + r() * 40 : PX1 - 60 + r() * 40);
+    const y = edge ? (r() < .5 ? PY0 + 18 + r() * 34 : PY1 - 52 + r() * 34) : PY0 + 20 + r() * (PY1 - PY0 - 40); lilies.push({ x, y, r: 8 + r() * 6, rot: r() * 6.28 }); }
+  const beds = sim.patches.map(p => { const blobs = []; for (let i = 0; i < 12; i++) blobs.push({ dx: (r() - .5) * p.r * 1.3, dy: (r() - .5) * p.r * 1.3, rr: p.r * (.3 + r() * .28) });
+    const leaves = []; for (let i = 0; i < 26; i++) leaves.push({ dx: (r() - .5) * p.r * 1.6, dy: (r() - .5) * p.r * 1.6, a: r() * 6.28 }); return { ...p, blobs, leaves }; });
+  const ripples = []; for (let i = 0; i < 22; i++) ripples.push({ x: PX0 + 40 + r() * (PX1 - PX0 - 80), y: PY0 + 30 + r() * (PY1 - PY0 - 60), w: 12 + r() * 18 });
   return { reeds, lilies, beds, ripples };
 }
 
-/* ---------- canvas ---------- */
-let scale = 1, dpr = 1;
+/* ---------- canvas ----------
+   The world is a landscape rectangle. On narrow screens it is drawn turned 90° so the pond
+   fills a phone screen in portrait; text is always drawn upright. */
+let scale = 1, dpr = 1, portrait = false;
+const wrapEl = cv.parentElement;
 function resize() {
-  const w = cv.getBoundingClientRect().width; dpr = Math.min(window.devicePixelRatio || 1, 2.5);
-  cv.width = Math.round(w * dpr); cv.height = Math.round(w * H / W * dpr); scale = w / W;
+  const w = wrapEl.clientWidth; if (!w) return;
+  portrait = w < 600;
+  const vw = portrait ? H : W, vh = portrait ? W : H;
+  dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+  cv.style.aspectRatio = `${vw} / ${vh}`;
+  cv.width = Math.round(w * dpr); cv.height = Math.round(w * vh / vw * dpr); scale = w / vw;
 }
-new ResizeObserver(() => { resize(); drawPond(); }).observe(cv);
+new ResizeObserver(() => { resize(); drawPond(); }).observe(wrapEl);
+function baseTransform() {
+  const k = scale * dpr;
+  if (portrait) ctx.setTransform(0, k, -k, 0, H * k, 0); else ctx.setTransform(k, 0, 0, k, 0, 0);
+}
+const uiK = () => Math.max(1, 0.8 / scale);   // keeps labels readable when the pond is drawn small
+function label(txt, x, y, { size = 11, weight = 600, color = '#EEF4EA', bg = null, align = 'center' } = {}) {
+  ctx.save(); ctx.translate(x, y); if (portrait) ctx.rotate(-Math.PI / 2);
+  const s = size * uiK(); ctx.font = `${weight} ${s}px Anuphan, sans-serif`; ctx.textAlign = align; ctx.textBaseline = 'middle';
+  if (bg) { const tw = ctx.measureText(txt).width + s; ctx.fillStyle = bg; ctx.fillRect(align === 'center' ? -tw / 2 : -s / 2, -s * .78, tw, s * 1.56); }
+  ctx.fillStyle = color; ctx.fillText(txt, 0, s * .06); ctx.restore();
+}
 let bankColor = '#A3AE80';
 function readColors() { bankColor = getComputedStyle(document.documentElement).getPropertyValue('--bank').trim() || bankColor; }
 matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => { readColors(); drawPond(); });
 
-function pondPath() { ctx.beginPath(); ctx.ellipse(CX, CY, RX, RY, 0, 0, Math.PI * 2); }
-function drawSnail(s, x, y) {
-  ctx.save(); ctx.translate(x, y); ctx.rotate(s.h);
-  // foot + head
+function rrect(x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+function pondPath() { rrect(PX0, PY0, PX1 - PX0, PY1 - PY0, 12); }
+const SNAIL_SIZE = 0.8;   // 20% smaller than the first version
+function drawSnail(s, x, y, extra = 1) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(s.h); ctx.scale(SNAIL_SIZE * extra, SNAIL_SIZE * extra);
   ctx.fillStyle = '#CDBB98'; ctx.beginPath(); ctx.ellipse(3, 0, 10, 4.6, 0, 0, Math.PI * 2); ctx.fill();
   ctx.strokeStyle = '#B7A27B'; ctx.lineWidth = 1.2; ctx.beginPath();
   ctx.moveTo(11, -1.5); ctx.lineTo(16, -4.5); ctx.moveTo(11, 1.5); ctx.lineTo(16, 4.5); ctx.stroke();
-  // shell
   const g = ctx.createRadialGradient(-3, -2.5, 1, -1, 0, 9);
   g.addColorStop(0, '#E5B659'); g.addColorStop(.6, '#B27A2C'); g.addColorStop(1, '#6E4516');
   ctx.fillStyle = g; ctx.beginPath(); ctx.arc(-1, 0, 8.2, 0, Math.PI * 2); ctx.fill();
   ctx.strokeStyle = 'rgba(60,34,10,.75)'; ctx.lineWidth = 1; ctx.beginPath();
   for (let t = 0; t < 12; t += .25) { const rr = 7.2 * Math.exp(-t * .17); const px = -1 + Math.cos(-t) * rr, py = Math.sin(-t) * rr; t === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py); }
   ctx.stroke();
+  if (s.marked) { ctx.fillStyle = '#E3322D'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.3; ctx.beginPath(); ctx.arc(-2, 0, 3.8, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
   ctx.restore();
-  if (s.marked) { ctx.fillStyle = '#E3322D'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(x - Math.cos(s.h), y - Math.sin(s.h), 3.4, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
 }
 function drawTrap(t, i, open, draggable) {
   const h = TRAP / 2;
@@ -446,31 +476,37 @@ function drawTrap(t, i, open, draggable) {
   ctx.fillStyle = open ? 'rgba(232,194,85,.18)' : 'rgba(255,255,255,.06)'; ctx.fillRect(-h, -h, TRAP, TRAP);
   ctx.strokeStyle = open ? 'rgba(245,225,160,.55)' : 'rgba(230,236,225,.28)'; ctx.lineWidth = .8; ctx.beginPath();
   for (let k = -h + 7.6; k < h; k += 7.6) { ctx.moveTo(k, -h); ctx.lineTo(k, h); ctx.moveTo(-h, k); ctx.lineTo(h, k); } ctx.stroke();
-  if (open) { // morning-glory bait leaves
-    ctx.fillStyle = '#7DBB4A'; for (const [dx, dy, a] of [[-5, 3, .6], [5, -2, -.8], [1, 6, 2.2]]) { ctx.save(); ctx.translate(dx, dy); ctx.rotate(a); ctx.beginPath(); ctx.moveTo(0, -7); ctx.quadraticCurveTo(6, -1, 0, 6); ctx.quadraticCurveTo(-6, -1, 0, -7); ctx.fill(); ctx.restore(); }
-  }
+  if (open) { ctx.fillStyle = '#7DBB4A'; for (const [dx, dy, a] of [[-5, 3, .6], [5, -2, -.8], [1, 6, 2.2]]) { ctx.save(); ctx.translate(dx, dy); ctx.rotate(a); ctx.beginPath(); ctx.moveTo(0, -7); ctx.quadraticCurveTo(6, -1, 0, 6); ctx.quadraticCurveTo(-6, -1, 0, -7); ctx.fill(); ctx.restore(); } }
   ctx.strokeStyle = open ? '#F0CC5E' : '#E6ECE1'; ctx.lineWidth = open ? 3 : 2.2;
   if (draggable) ctx.setLineDash([6, 4]);
   ctx.strokeRect(-h, -h, TRAP, TRAP); ctx.setLineDash([]);
-  ctx.fillStyle = open ? '#F0CC5E' : '#E6ECE1'; ctx.beginPath(); ctx.arc(h, -h, 9, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = '#1F332D'; ctx.font = '700 11px Anuphan, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(String(i + 1), h, -h + .5);
   ctx.restore();
+  // number badge on the corner that sits top-right on screen
+  const bx = portrait ? t.x - h : t.x + h, by = t.y - h, br = 9 * uiK();
+  ctx.fillStyle = open ? '#F0CC5E' : '#E6ECE1'; ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI * 2); ctx.fill();
+  label(String(i + 1), bx, by, { size: 11, weight: 700, color: '#1F332D' });
+}
+function drawCanal(sim) {
+  const x0 = PX1 - 12, y0 = CY - 26, cw = 52;
+  ctx.fillStyle = 'rgba(96,74,44,.55)'; ctx.fillRect(x0, y0 - 8, W - x0 + 2, cw + 16);
+  ctx.fillStyle = '#23585A'; ctx.fillRect(x0, y0, W - x0 + 2, cw);
+  ctx.strokeStyle = 'rgba(255,255,255,.14)'; ctx.lineWidth = 1.2; ctx.beginPath();
+  for (let x = PX1 + 8; x < W; x += 14) { ctx.moveTo(x, CY - 9); ctx.lineTo(x + 7, CY - 9); ctx.moveTo(x - 5, CY + 9); ctx.lineTo(x + 2, CY + 9); } ctx.stroke();
+  if (!sim.openPop) { // closed sluice gate
+    ctx.fillStyle = '#6B4A2B'; ctx.fillRect(PX1 + 2, y0 - 10, 12, cw + 20);
+    ctx.strokeStyle = '#4A3119'; ctx.lineWidth = 1; for (let y = y0 - 6; y < y0 + cw + 10; y += 8) { ctx.beginPath(); ctx.moveTo(PX1 + 2, y); ctx.lineTo(PX1 + 14, y); ctx.stroke(); }
+  }
+  const lx = (PX1 + W) / 2 + 4, ly = y0 - 26;
+  label(sim.openPop ? 'ลำราง' : 'ประตูน้ำปิด', lx, portrait ? ly + 6 : ly, { size: 10.5, color: '#22301C' });
 }
 function drawPond() {
   const sim = st.sim; if (!sim || !cv.width) return;
-  ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height);
+  baseTransform();
   ctx.fillStyle = bankColor; ctx.fillRect(0, 0, W, H);
-  // muddy rim
-  ctx.fillStyle = 'rgba(96,74,44,.55)'; ctx.beginPath(); ctx.ellipse(CX, CY + 3, RX + 8, RY + 8, 0, 0, Math.PI * 2); ctx.fill();
-  if (sim.openPop) { // canal linking the pond to the outside
-    ctx.fillStyle = 'rgba(96,74,44,.55)'; ctx.fillRect(MOUTH.x, CY - 22, W - MOUTH.x + 2, 44);
-    ctx.fillStyle = '#23585A'; ctx.fillRect(MOUTH.x, CY - 15, W - MOUTH.x + 2, 30);
-    ctx.strokeStyle = 'rgba(255,255,255,.14)'; ctx.lineWidth = 1.2; ctx.beginPath();
-    for (let x = MOUTH.x + 26; x < W; x += 12) { ctx.moveTo(x, CY - 6); ctx.lineTo(x + 6, CY - 6); ctx.moveTo(x - 4, CY + 6); ctx.lineTo(x + 2, CY + 6); } ctx.stroke();
-    ctx.fillStyle = '#2B3A22'; ctx.font = '600 12px Anuphan, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-    ctx.fillText('ลำราง', (CX + RX + W) / 2 + 2, CY - 25);
-  }
-  const g = ctx.createRadialGradient(CX - 40, CY - 40, 20, CX, CY, RX * 1.05);
+  ctx.fillStyle = 'rgba(96,74,44,.55)'; rrect(PX0 - 8, PY0 - 6, PX1 - PX0 + 16, PY1 - PY0 + 16, 18); ctx.fill();
+  drawCanal(sim);
+  const g = ctx.createRadialGradient(CX - 80, CY - 60, 30, CX, CY, RX * 1.1);
   g.addColorStop(0, '#3F8A80'); g.addColorStop(.7, '#2A6660'); g.addColorStop(1, '#1B4643');
   ctx.fillStyle = g; pondPath(); ctx.fill();
   ctx.save(); pondPath(); ctx.clip();
@@ -484,29 +520,37 @@ function drawPond() {
     ctx.strokeStyle = 'rgba(255,255,255,.05)'; for (const r of st.decor.ripples) { ctx.beginPath(); ctx.ellipse(r.x, r.y, r.w, r.w * .35, 0, 0, Math.PI * 2); ctx.stroke(); } }
   for (const b of st.decor.beds) { ctx.strokeStyle = see ? 'rgba(120,180,90,.8)' : 'rgba(130,170,80,.75)'; ctx.lineWidth = 2; for (const l of b.leaves) { ctx.beginPath(); ctx.moveTo(b.x + l.dx, b.y + l.dy); ctx.lineTo(b.x + l.dx + Math.cos(l.a) * 7, b.y + l.dy + Math.sin(l.a) * 7); ctx.stroke(); } }
   for (const l of st.decor.lilies) { ctx.save(); ctx.translate(l.x, l.y); ctx.rotate(l.rot); ctx.fillStyle = '#5E9440'; ctx.beginPath(); ctx.moveTo(0, 0); ctx.arc(0, 0, l.r, .35, Math.PI * 2 - .05); ctx.closePath(); ctx.fill(); ctx.strokeStyle = 'rgba(30,60,20,.4)'; ctx.lineWidth = 1; ctx.stroke(); ctx.restore(); }
+  ctx.restore();
   const drag = draggablePhase();
   sim.traps.forEach((t, i) => drawTrap(t, i, sim.open, drag && !trapsBusy));
-  // trapped snails, laid out on a small grid inside each trap
+  // trapped snails, packed on a small grid inside each trap
   const per = sim.traps.map(() => []);
   for (const s of sim.snails) if (s.trap >= 0) per[s.trap].push(s);
-  per.forEach((list, i) => { const t = sim.traps[i]; const n = list.length, cols = Math.max(1, Math.ceil(Math.sqrt(n))), cell = Math.min(15, (TRAP - 8) / cols);
+  per.forEach((list, i) => { const t = sim.traps[i]; const n = list.length, cols = Math.max(1, Math.ceil(Math.sqrt(n))), cell = Math.min(13, (TRAP - 8) / cols);
     list.forEach((s, k) => { const cx = t.x - (cols - 1) * cell / 2 + (k % cols) * cell, cy = t.y - (Math.ceil(n / cols) - 1) * cell / 2 + Math.floor(k / cols) * cell;
-      ctx.save(); const sc = Math.min(1, cell / 15); ctx.translate(cx, cy); ctx.scale(sc, sc); drawSnail(s, 0, 0); ctx.restore(); });
-    if (n) { ctx.fillStyle = 'rgba(18,34,30,.85)'; const txt = n + ' ตัว'; ctx.font = '600 11px Anuphan, sans-serif'; const tw = ctx.measureText(txt).width + 10; ctx.fillRect(t.x - tw / 2, t.y + TRAP / 2 + 3, tw, 16); ctx.fillStyle = '#EEF4EA'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(txt, t.x, t.y + TRAP / 2 + 11.5); }
+      drawSnail(s, cx, cy, Math.min(1, cell / 13)); });
+    if (n) { const off = TRAP / 2 + 10 * uiK(); label(n + ' ตัว', portrait ? t.x + off : t.x, portrait ? t.y : t.y + off, { bg: 'rgba(18,34,30,.85)' }); }
   });
-  ctx.restore();
   ctx.strokeStyle = '#4C6A2E'; ctx.lineWidth = 2; ctx.lineCap = 'round';
-  for (const r of st.decor.reeds) { if (sim.openPop && Math.abs(Math.sin(r.a)) < .2 && Math.cos(r.a) > 0) continue; const x = CX + Math.cos(r.a) * (RX + 6), y = CY + Math.sin(r.a) * (RY + 6); ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + Math.cos(r.a) * r.l * .4 + r.w * r.l, y - r.l); ctx.stroke(); }
+  for (const r of st.decor.reeds) {
+    let x, y, nx, ny;
+    if (r.side === 't') { x = PX0 + r.t; y = PY0 - 8; nx = 0; ny = -1; } else if (r.side === 'b') { x = PX0 + r.t; y = PY1 + 10; nx = 0; ny = 1; }
+    else if (r.side === 'l') { x = PX0 - 8; y = PY0 + r.t; nx = -1; ny = 0; } else { x = PX1 + 8; y = PY0 + r.t; nx = 1; ny = 0; if (Math.abs(y - CY) < 44) continue; }
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + nx * r.l + ny * r.w * r.l, y + ny * r.l + nx * r.w * r.l); ctx.stroke();
+  }
 }
 
 /* ---------- dragging traps ---------- */
 function draggablePhase() { return st.phase === 'setup' || st.phase === 'released'; }
 let dragI = -1;
-function toLogical(e) { const b = cv.getBoundingClientRect(); return { x: (e.clientX - b.left) / b.width * W, y: (e.clientY - b.top) / b.height * H }; }
+function toLogical(e) {
+  const b = cv.getBoundingClientRect(), px = (e.clientX - b.left) / scale, py = (e.clientY - b.top) / scale;
+  return portrait ? { x: py, y: H - px } : { x: px, y: py };
+}
 cv.addEventListener('pointerdown', e => {
   if (!draggablePhase() || st.sim.snails.some(s => s.trap >= 0)) return;
-  const p = toLogical(e);
-  dragI = st.sim.traps.findIndex(t => Math.abs(t.x - p.x) < TRAP / 2 + 10 && Math.abs(t.y - p.y) < TRAP / 2 + 10);
+  const p = toLogical(e), pad = TRAP / 2 + 12 * uiK();
+  dragI = st.sim.traps.findIndex(t => Math.abs(t.x - p.x) < pad && Math.abs(t.y - p.y) < pad);
   if (dragI >= 0) { cv.setPointerCapture(e.pointerId); e.preventDefault(); }
 });
 cv.addEventListener('pointermove', e => { if (dragI < 0) return; const p = toLogical(e); const t = st.sim.traps[dragI]; t.x = Math.max(0, Math.min(W, p.x)); t.y = Math.max(0, Math.min(H, p.y)); clampTrap(t); drawPond(); });
